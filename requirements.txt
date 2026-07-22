@@ -1,0 +1,33 @@
+# DeepCement - 固井质量评测报告系统
+# Core
+llama-index>=0.10.0
+llama-index-readers-file>=0.1.0
+llama-index-llms-openai-like>=0.1.0
+llama-index-embeddings-huggingface>=0.1.0
+
+# Agent
+deepagents>=0.6.12
+langchain-openai>=0.1.0
+
+# Document parsing
+pymupdf>=0.4.0          # PDF 解析
+openpyxl>=3.1.0         # Excel 解析
+pandas>=2.0.0           # 数据处理
+
+# Config
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Report
+jinja2>=3.1.0           # 模板引擎
+markdown>=3.5.0         # Markdown 渲染
+
+# Utils
+loguru>=0.7.0           # 日志
+rich>=13.0.0            # 终端美化
+
+# Dev tools (格式化/检查)
+black>=24.0.0
+isort>=5.13.0
+ruff>=0.4.0

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 环境
+.env
+.venv/
+venv/
+env/
+
+# 数据和索引（大文件不入库）
+data/index/
+data/raw/*.pdf
+data/raw/*.xlsx
+data/raw/*.xls
+data/raw/*.csv
+
+# 日志
+logs/
+
+# 模型文件（大文件不入库）
+models/
+
+# 报告输出
+agent/report/output/*.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
