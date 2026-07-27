@@ -1,9 +1,8 @@
 """
 索引管理模块
-基于 LlamaIndex 构建和管理向量索引
+基于 LlamaIndex + Milvus (Zilliz Cloud) 构建和管理向量索引
 """
 
-from pathlib import Path
 from typing import List, Optional
 
 from loguru import logger
@@ -13,19 +12,19 @@ from core.ingester import CementDocument
 
 
 class IndexManager:
-    """LlamaIndex 向量索引管理器
+    """LlamaIndex 向量索引管理器（Zilliz Cloud 后端）
 
     负责：
     - 将 CementDocument 转为 LlamaIndex Document
-    - 构建 VectorStoreIndex
-    - 持久化 / 加载索引
-    - 增量更新
+    - 构建 VectorStoreIndex（存储到 Zilliz Cloud）
+    - 连接已有集合 / 增量更新
     """
 
     def __init__(self):
         self._index = None
         self._llm = None
         self._embed_model = None
+        self._vector_store = None
 
     def _init_llm(self):
         """初始化 LLM（延迟加载）"""
@@ -48,12 +47,29 @@ class IndexManager:
         if self._embed_model is not None:
             return
 
-        # from FlagEmbedding import FlagModel
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+        from pathlib import Path
 
         model_path = str(Path(__file__).parent.parent / "models" / "bge-large-zh")
         self._embed_model = HuggingFaceEmbedding(model_path)
         logger.info(f"Embedding 初始化完成: {model_path}")
+
+    def _init_vector_store(self):
+        """初始化 Milvus 向量存储（延迟加载）"""
+        if self._vector_store is not None:
+            return
+
+        from llama_index.vector_stores.milvus import MilvusVectorStore
+
+        self._vector_store = MilvusVectorStore(
+            uri=settings.milvus.uri,
+            token=settings.milvus.token,
+            collection_name=settings.milvus.collection_name,
+            dim=settings.milvus.dim,
+        )
+        logger.info(
+            f"Milvus 连接成功: collection={settings.milvus.collection_name}"
+        )
 
     def _to_llama_documents(self, cement_docs: List[CementDocument]) -> list:
         """将 CementDocument 转为 LlamaIndex Document"""
@@ -70,7 +86,7 @@ class IndexManager:
         return llama_docs
 
     def build_index(self, documents: List[CementDocument]):
-        """构建向量索引
+        """构建向量索引（写入 Zilliz Cloud）
 
         Args:
             documents: 解析后的固井文档列表
@@ -79,8 +95,8 @@ class IndexManager:
 
         self._init_llm()
         self._init_embed()
+        self._init_vector_store()
 
-        # 配置全局设置
         Settings.llm = self._llm
         Settings.embed_model = self._embed_model
 
@@ -90,49 +106,43 @@ class IndexManager:
             return
 
         logger.info(f"开始构建索引，共 {len(llama_docs)} 个文档...")
-        self._index = VectorStoreIndex.from_documents(llama_docs, show_progress=True)
-        logger.info("索引构建完成")
+        from llama_index.core import StorageContext
 
-    def save_index(self, index_dir: Optional[Path] = None):
-        """持久化索引到磁盘"""
-        if self._index is None:
-            logger.warning("索引未构建，无法保存")
-            return
+        storage_context = StorageContext.from_defaults(
+            vector_store=self._vector_store,
+        )
+        self._index = VectorStoreIndex.from_documents(
+            llama_docs,
+            storage_context=storage_context,
+            show_progress=True,
+        )
+        logger.info("索引构建完成（已写入 Zilliz Cloud）")
 
-        save_dir = Path(index_dir) if index_dir else settings.index_dir
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        self._index.storage_context.persist(persist_dir=str(save_dir))
-        logger.info(f"索引已保存到: {save_dir}")
-
-    def load_index(self, index_dir: Optional[Path] = None) -> bool:
-        """从磁盘加载索引
+    def connect(self) -> bool:
+        """连接已有的 Zilliz 集合并加载索引
 
         Returns:
-            是否加载成功
+            是否连接成功
         """
-        from llama_index.core import StorageContext, load_index_from_storage
-
-        load_dir = Path(index_dir) if index_dir else settings.index_dir
-        if not load_dir.exists():
-            logger.warning(f"索引目录不存在: {load_dir}")
-            return False
+        from llama_index.core import Settings, VectorStoreIndex
 
         try:
             self._init_llm()
             self._init_embed()
-
-            from llama_index.core import Settings
+            self._init_vector_store()
 
             Settings.llm = self._llm
             Settings.embed_model = self._embed_model
 
-            storage_context = StorageContext.from_defaults(persist_dir=str(load_dir))
-            self._index = load_index_from_storage(storage_context)
-            logger.info(f"索引加载成功: {load_dir}")
+            self._index = VectorStoreIndex.from_vector_store(
+                self._vector_store,
+            )
+            logger.info(
+                f"已连接 Zilliz 集合: {settings.milvus.collection_name}"
+            )
             return True
         except Exception as e:
-            logger.error(f"索引加载失败: {e}")
+            logger.error(f"连接 Zilliz 失败: {e}")
             return False
 
     def add_documents(self, documents: List[CementDocument]):
@@ -140,7 +150,7 @@ class IndexManager:
         from llama_index.core import Settings
 
         if self._index is None:
-            logger.warning("索引未加载，将构建新索引")
+            logger.warning("索引未连接，将构建新索引")
             self.build_index(documents)
             return
 
@@ -152,7 +162,7 @@ class IndexManager:
         llama_docs = self._to_llama_documents(documents)
         for doc in llama_docs:
             self._index.insert(doc)
-        logger.info(f"增量添加 {len(llama_docs)} 个文档")
+        logger.info(f"增量添加 {len(llama_docs)} 个文档到 Zilliz")
 
     @property
     def index(self):

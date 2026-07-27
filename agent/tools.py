@@ -3,20 +3,28 @@ Agent 工具定义
 为 DeepAgent 提供固井质量评测相关的工具函数
 """
 
+from pathlib import Path
 from typing import Optional
 
 from langchain_core.tools import tool
 
 from config import settings
-from core.retriever import HistoryRetriever
+from core.cascade_evaluator import CascadeEvaluator
 from core.evaluator import QualityEvaluator
+from core.retriever import HistoryRetriever
 
 
 def create_cement_tools(
     retriever: HistoryRetriever,
     evaluator: QualityEvaluator,
+    cascade_evaluator: CascadeEvaluator,
 ) -> list:
     """创建固井评测工具集
+
+    Args:
+        retriever: 历史资料检索器
+        evaluator: LLM 评估器
+        cascade_evaluator: 分层评估器（可选）
 
     Returns:
         工具列表（LangChain @tool 装饰的函数）
@@ -51,9 +59,7 @@ def create_cement_tools(
                 meta_info += f" | 井名: {r.metadata['well_name']}"
             if r.metadata.get("date"):
                 meta_info += f" | 日期: {r.metadata['date']}"
-            output_parts.append(
-                f"【结果{i}】{meta_info}\n{r.content[:500]}..."
-            )
+            output_parts.append(f"【结果{i}】{meta_info}\n{r.content[:500]}...")
 
         return "\n\n".join(output_parts)
 
@@ -88,13 +94,15 @@ def create_cement_tools(
             if dim.issues:
                 parts.append(f"    问题: {'; '.join(dim.issues)}")
 
-        parts.extend([
-            "",
-            "--- 结论 ---",
-            report.conclusion,
-            "",
-            "--- 改进建议 ---",
-        ])
+        parts.extend(
+            [
+                "",
+                "--- 结论 ---",
+                report.conclusion,
+                "",
+                "--- 改进建议 ---",
+            ]
+        )
 
         for i, sug in enumerate(report.suggestions, 1):
             parts.append(f"  {i}. {sug}")
@@ -134,4 +142,34 @@ def create_cement_tools(
         output += "\n注：详细对比分析请使用 evaluate_quality 分别评测后参考。"
         return output
 
-    return [search_history, evaluate_quality, compare_data]
+    @tool
+    def evaluate_well_log(
+        las_file: str,
+        well_name: Optional[str] = None,
+    ) -> str:
+        """使用分层评估系统评估测井数据（LAS 文件）
+
+        评估流程：规则引擎 → XGBoost → LLM 兜底
+        置信度高的层级直接返回，低置信度才交给下一层。
+
+        Args:
+            las_file: LAS 文件路径（支持 .las 和 .TXT 格式）
+            well_name: 井名（可选，默认从文件解析）
+        """
+        if cascade_evaluator is None:
+            return "分层评估器未初始化，请先加载模型。"
+
+        las_path = Path(las_file)
+        if not las_path.exists():
+            # 尝试在 data/raw 目录查找
+            las_path = settings.raw_dir / las_file
+            if not las_path.exists():
+                return f"LAS 文件不存在: {las_file}"
+
+        try:
+            result = cascade_evaluator.evaluate_las_file(str(las_path))
+            return cascade_evaluator.get_evaluation_report(result)
+        except Exception as e:
+            return f"测井数据评估失败: {e}"
+
+    return [search_history, evaluate_quality, compare_data, evaluate_well_log]

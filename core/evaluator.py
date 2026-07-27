@@ -3,9 +3,9 @@
 基于检索结果 + LLM 生成固井质量评测
 """
 
-from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -15,6 +15,7 @@ from core.retriever import HistoryRetriever, RetrievalResult
 
 class QualityGrade(str, Enum):
     """质量等级"""
+
     EXCELLENT = "优秀"
     GOOD = "良好"
     QUALIFIED = "合格"
@@ -25,22 +26,24 @@ class QualityGrade(str, Enum):
 @dataclass
 class QualityDimension:
     """质量评测维度"""
-    name: str                             # 维度名称
-    score: float = 0.0                    # 得分（0-100）
+
+    name: str  # 维度名称
+    score: float = 0.0  # 得分（0-100）
     grade: QualityGrade = QualityGrade.UNKNOWN
-    details: str = ""                     # 详细说明
+    details: str = ""  # 详细说明
     issues: List[str] = field(default_factory=list)  # 发现的问题
 
 
 @dataclass
 class QualityReport:
     """质量评测报告"""
-    well_name: str = ""                   # 井名
+
+    well_name: str = ""  # 井名
     well_info: Dict[str, Any] = field(default_factory=dict)  # 基本信息
-    overall_score: float = 0.0            # 综合得分
+    overall_score: float = 0.0  # 综合得分
     overall_grade: QualityGrade = QualityGrade.UNKNOWN
     dimensions: List[QualityDimension] = field(default_factory=list)
-    conclusion: str = ""                  # 结论
+    conclusion: str = ""  # 结论
     suggestions: List[str] = field(default_factory=list)  # 改进建议
     raw_data: List[RetrievalResult] = field(default_factory=list)  # 原始检索数据
 
@@ -117,6 +120,7 @@ class QualityEvaluator:
             return
 
         from llama_index.llms.openai_like import OpenAILike
+
         self._llm = OpenAILike(
             model=settings.llm.model,
             api_base=settings.llm.base_url,
@@ -200,6 +204,12 @@ class QualityEvaluator:
             parts.append(f"【资料{i}】(来源: {item.source})\n{item.content}")
         return "\n\n".join(parts)
 
+    def _extract_response_text(self, response) -> str:
+        """从 LLM ChatResponse 中提取文本内容"""
+        if hasattr(response, "message") and hasattr(response.message, "content"):
+            return response.message.content
+        return str(response)
+
     def _evaluate_dimension(
         self,
         dim_key: str,
@@ -226,9 +236,11 @@ class QualityEvaluator:
 
         try:
             from llama_index.core import Settings
+
             Settings.llm = self._llm
-            response = self._llm.complete(prompt)
-            result_text = str(response)
+            response = self._llm.chat(prompt)
+            result_text = self._extract_response_text(response)
+            logger.debug(f"维度 {dim_key} LLM 返回: {result_text[:200]}...")
         except Exception as e:
             logger.error(f"维度 {dim_key} 评测失败: {e}")
             return QualityDimension(name=dim_def["name"])
@@ -243,24 +255,24 @@ class QualityEvaluator:
         dim = QualityDimension(name=name)
 
         # 提取得分
-        score_match = re.search(r'得分[：:]\s*(\d+(?:\.\d+)?)', text)
+        score_match = re.search(r"得分[：:]\s*(\d+(?:\.\d+)?)", text)
         if score_match:
             dim.score = float(score_match.group(1))
 
         # 提取等级
-        grade_match = re.search(r'等级[：:]\s*(优秀|良好|合格|不合格)', text)
+        grade_match = re.search(r"等级[：:]\s*(优秀|良好|合格|不合格)", text)
         if grade_match:
             dim.grade = QualityGrade(grade_match.group(1))
         else:
             dim.grade = self._score_to_grade(dim.score)
 
         # 提取说明
-        detail_match = re.search(r'说明[：:]\s*(.+?)(?=问题[：:]|$)', text, re.DOTALL)
+        detail_match = re.search(r"说明[：:]\s*(.+?)(?=问题[：:]|$)", text, re.DOTALL)
         if detail_match:
             dim.details = detail_match.group(1).strip()
 
         # 提取问题
-        issue_match = re.search(r'问题[：:]\s*(.+?)$', text, re.DOTALL)
+        issue_match = re.search(r"问题[：:]\s*(.+?)$", text, re.DOTALL)
         if issue_match:
             issue_text = issue_match.group(1).strip()
             if issue_text and issue_text != "无":
@@ -277,10 +289,9 @@ class QualityEvaluator:
         """生成综合结论"""
         self._init_llm()
 
-        dim_summary = "\n".join([
-            f"- {d.name}: {d.score}分({d.grade.value})。{d.details}"
-            for d in dimensions
-        ])
+        dim_summary = "\n".join(
+            [f"- {d.name}: {d.score}分({d.grade.value})。{d.details}" for d in dimensions]
+        )
 
         prompt = f"""你是一位固井质量评测专家。请根据以下评测结果，为井【{well_name}】撰写固井质量综合结论。
 
@@ -298,9 +309,11 @@ class QualityEvaluator:
 
         try:
             from llama_index.core import Settings
+
             Settings.llm = self._llm
-            response = self._llm.complete(prompt)
-            return str(response).strip()
+            response = self._llm.chat(prompt)
+            text = self._extract_response_text(response)
+            return text.strip()
         except Exception as e:
             logger.error(f"生成结论失败: {e}")
             return "结论生成失败，请查看各维度详细评测结果。"
@@ -338,9 +351,11 @@ class QualityEvaluator:
 
         try:
             from llama_index.core import Settings
+
             Settings.llm = self._llm
-            response = self._llm.complete(prompt)
-            text = str(response).strip()
+            response = self._llm.chat(prompt)
+            text = self._extract_response_text(response)
+            text = text.strip()
 
             # 解析建议列表
             suggestions = []
@@ -349,7 +364,8 @@ class QualityEvaluator:
                 if line and (line[0].isdigit() or line.startswith("-") or line.startswith("•")):
                     # 去掉序号前缀
                     import re
-                    cleaned = re.sub(r'^[\d.]+\s*', '', line).strip()
+
+                    cleaned = re.sub(r"^[\d.]+\s*", "", line).strip()
                     if cleaned:
                         suggestions.append(cleaned)
 

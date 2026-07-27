@@ -14,10 +14,7 @@ env/
 
 # 数据和索引（大文件不入库）
 data/index/
-data/raw/*.pdf
-data/raw/*.xlsx
-data/raw/*.xls
-data/raw/*.csv
+data/raw/*
 
 # 日志
 logs/

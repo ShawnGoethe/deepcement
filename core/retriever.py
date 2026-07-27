@@ -32,8 +32,6 @@ class HistoryRetriever:
 
     def __init__(self, index_manager: IndexManager):
         self.index_manager = index_manager
-        self._query_engine = None
-        self._retriever = None
 
     def _ensure_ready(self):
         """确保索引已就绪"""
@@ -41,22 +39,18 @@ class HistoryRetriever:
             raise RuntimeError("索引未就绪，请先构建或加载索引")
 
     def _get_retriever(self, top_k: int = 5):
-        """获取 LlamaIndex retriever"""
+        """获取 LlamaIndex retriever（每次根据 top_k 创建新实例）"""
         self._ensure_ready()
-        if self._retriever is None:
-            self._retriever = self.index_manager.index.as_retriever(
-                similarity_top_k=top_k,
-            )
-        return self._retriever
+        return self.index_manager.index.as_retriever(
+            similarity_top_k=top_k,
+        )
 
     def _get_query_engine(self, top_k: int = 5):
-        """获取 LlamaIndex query engine"""
+        """获取 LlamaIndex query engine（每次根据 top_k 创建新实例）"""
         self._ensure_ready()
-        if self._query_engine is None:
-            self._query_engine = self.index_manager.index.as_query_engine(
-                similarity_top_k=top_k,
-            )
-        return self._query_engine
+        return self.index_manager.index.as_query_engine(
+            similarity_top_k=top_k,
+        )
 
     def search(
         self,

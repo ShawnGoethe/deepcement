@@ -1,6 +1,6 @@
 """
 数据摄入模块
-负责解析 PDF/Excel/CSV 固井资料，输出标准化 Document 对象
+负责解析 PDF/Word/Excel/CSV 固井资料，输出标准化 Document 对象
 """
 
 from pathlib import Path
@@ -24,6 +24,7 @@ class DocumentIngester:
 
     支持格式：
     - PDF（固井施工报告、完井报告）—— 重点支持
+    - Word（固井施工报告、技术文档）
     - Excel（固井数据表、施工参数记录）
     - CSV（结构化数据）
     """
@@ -41,6 +42,8 @@ class DocumentIngester:
             suffix = file_path.suffix.lower()
             if suffix == ".pdf":
                 docs = self._parse_pdf(file_path)
+            elif suffix in (".docx", ".doc"):
+                docs = self._parse_word(file_path)
             elif suffix in (".xlsx", ".xls"):
                 docs = self._parse_excel(file_path)
             elif suffix == ".csv":
@@ -60,6 +63,8 @@ class DocumentIngester:
         suffix = file_path.suffix.lower()
         if suffix == ".pdf":
             return self._parse_pdf(file_path)
+        elif suffix in (".docx", ".doc"):
+            return self._parse_word(file_path)
         elif suffix in (".xlsx", ".xls"):
             return self._parse_excel(file_path)
         elif suffix == ".csv":
@@ -108,6 +113,101 @@ class DocumentIngester:
             logger.error(f"PDF 解析失败 {file_path}: {e}")
 
         return documents
+
+    def _parse_word(self, file_path: Path) -> List[CementDocument]:
+        """解析 Word 文件（.docx / .doc）
+
+        使用 python-docx 解析 .docx；
+        .doc 旧格式尝试通过 pywin32（Windows）转换后解析
+        """
+        try:
+            from docx import Document as DocxDocument
+        except ImportError:
+            logger.error("请安装 python-docx: pip install python-docx")
+            return []
+
+        documents = []
+        try:
+            suffix = file_path.suffix.lower()
+            actual_path = file_path
+
+            # .doc 旧格式需要先转换
+            if suffix == ".doc":
+                converted = self._convert_doc_to_docx(file_path)
+                if converted is None:
+                    logger.error(f".doc 转换失败，跳过: {file_path}")
+                    return []
+                actual_path = converted
+
+            doc = DocxDocument(str(actual_path))
+
+            # 提取所有段落文本
+            paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            full_text = "\n".join(paragraphs)
+
+            # 提取表格内容
+            for table in doc.tables:
+                table_text = []
+                for row in table.rows:
+                    cells = [cell.text.strip() for cell in row.cells]
+                    table_text.append("\t".join(cells))
+                if table_text:
+                    full_text += "\n" + "\n".join(table_text)
+
+            if not full_text.strip():
+                logger.warning(f"Word 文件内容为空: {file_path}")
+                return []
+
+            metadata = self._extract_metadata(full_text, file_path)
+            metadata["file_path"] = str(file_path)
+            metadata["paragraph_count"] = len(paragraphs)
+            metadata["table_count"] = len(doc.tables)
+
+            documents.append(CementDocument(
+                content=full_text,
+                source=file_path.name,
+                doc_type="report",
+                metadata=metadata,
+            ))
+
+            # 清理临时转换文件
+            if suffix == ".doc" and actual_path != file_path:
+                actual_path.unlink(missing_ok=True)
+
+        except Exception as e:
+            logger.error(f"Word 解析失败 {file_path}: {e}")
+
+        return documents
+
+    def _convert_doc_to_docx(self, doc_path: Path) -> Optional[Path]:
+        """通过 pywin32 将 .doc 转换为 .docx（仅 Windows）"""
+        try:
+            import win32com.client
+            import pythoncom
+        except ImportError:
+            logger.error("解析 .doc 需要 pywin32: pip install pywin32")
+            return None
+
+        docx_path = doc_path.with_suffix(".docx")
+        word = None
+        try:
+            pythoncom.CoInitialize()
+            word = win32com.client.Dispatch("Word.Application")
+            word.Visible = False
+            doc = word.Documents.Open(str(doc_path.resolve()))
+            doc.SaveAs2(str(docx_path.resolve()), FileFormat=16)  # 16 = docx
+            doc.Close()
+            return docx_path
+        except Exception as e:
+            logger.error(f".doc 转换失败: {e}")
+            return None
+        finally:
+            if word:
+                try:
+                    word.Quit()
+                except Exception:
+                    pass
+            pythoncom.CoUninitialize()
 
     def _parse_excel(self, file_path: Path) -> List[CementDocument]:
         """解析 Excel 文件（固井数据表）"""

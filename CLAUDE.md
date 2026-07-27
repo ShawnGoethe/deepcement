@@ -44,7 +44,7 @@ Documents (data/raw/) → Ingester → Indexer → Retriever → Evaluator → R
 
 ### Core Modules (`core/`)
 
-- **`ingester.py`** — Parses PDF/Excel/CSV into `CementDocument` objects with extracted metadata (well name, date, depth). Uses PyMuPDF for PDF, pandas for Excel/CSV.
+- **`ingester.py`** — Parses PDF/Word/Excel/CSV into `CementDocument` objects with extracted metadata (well name, date, depth). Uses PyMuPDF for PDF, python-docx for Word, pandas for Excel/CSV.
 - **`indexer.py`** — `IndexManager` wraps LlamaIndex `VectorStoreIndex`. Handles build/save/load with lazy initialization of LLM and embedding models. Uses `OpenAILike` wrappers for API-compatible models.
 - **`retriever.py`** — `HistoryRetriever` provides semantic search with metadata filtering (`search()`, `query()`, `search_by_well()`).
 - **`evaluator.py`** — `QualityEvaluator` runs 4-dimension evaluation (slurry, operation, effect, anomaly). Each dimension is independently scored by LLM. Overall score = dimension average.
@@ -81,7 +81,7 @@ Tests in `tests/test_basic.py` verify config loading, ingester initialization, d
 
 ## Directory Structure
 
-- `data/raw/` — Input documents (PDF/Excel/CSV)
+- `data/raw/` — Input documents (PDF/Word/Excel/CSV)
 - `data/index/` — Persisted LlamaIndex vector store
 - `agent/report/output/` — Generated Markdown reports
 - `logs/` — Application logs (loguru with rotation)

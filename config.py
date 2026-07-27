@@ -42,6 +42,17 @@ class RetrieverConfig(BaseSettings):
     model_config = {"env_prefix": "RETRIEVER_"}
 
 
+class MilvusConfig(BaseSettings):
+    """Milvus/Zilliz 向量数据库配置"""
+
+    uri: str = Field(default="", description="Zilliz Cloud endpoint URL")
+    token: str = Field(default="", description="Zilliz token (username:password)")
+    collection_name: str = Field(default="cement_docs", description="集合名称")
+    dim: int = Field(default=1024, description="向量维度（bge-large-zh = 1024）")
+
+    model_config = {"env_prefix": "MILVUS_"}
+
+
 class PathConfig(BaseSettings):
     """路径配置"""
 
@@ -60,6 +71,7 @@ class Settings:
         self.embed = EmbedConfig()
         self.retriever = RetrieverConfig()
         self.paths = PathConfig()
+        self.milvus = MilvusConfig()
 
     @property
     def raw_dir(self) -> Path:
