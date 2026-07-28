@@ -3,12 +3,17 @@ Agent 编排模块
 基于 DeepAgent 编排固井质量评测流程
 """
 
+from pathlib import Path
+
 from loguru import logger
 
 from agent.tools import create_cement_tools
 from config import BASE_DIR, settings
 from core import DocumentIngester, HistoryRetriever, IndexManager, QualityEvaluator
 from core.cascade_evaluator import CascadeEvaluator
+
+# Workspace 路径（AGENTS.md + skills）
+WORKSPACE_DIR = Path(__file__).parent / "workspace"
 
 
 class CementAgent:
@@ -42,6 +47,9 @@ class CementAgent:
             self.cascade_evaluator,
         )
 
+        # 会话状态
+        self._session_initialized = False
+
         # 初始化 DeepAgent
         self._agent = self._create_agent()
 
@@ -63,6 +71,20 @@ class CementAgent:
 
     def _create_agent(self):
         """创建 DeepAgent 实例
+
+        Workspace 结构：
+            agent/workspace/
+            ├── memory/
+            │   ├── long-term.md       # 长期记忆（跨会话持久知识）
+            │   └── short-term.md      # 短期记忆（当前会话上下文）
+            ├── prompts/
+            │   └── system-prompt.md   # 系统提示词
+            └── skills/                # 技能目录
+                ├── build-index/
+                ├── evaluate-well/
+                ├── analyze-las/
+                ├── train-model/
+                └── code-quality/
 
         Raises:
             ImportError: deepagents 未安装
@@ -88,44 +110,110 @@ class CementAgent:
             f"[_create_agent] 注册 {len(self.tools)} 个工具: {[t.name for t in self.tools]}"
         )
 
+        # 从 workspace 加载系统提示词
+        system_prompt = self._load_prompt("system-prompt.md")
+
+        # FilesystemBackend 以 workspace 为根目录
+        # 虚拟路径 /skills/ → agent/workspace/skills/
+        # 虚拟路径 /AGENTS.md → agent/workspace/AGENTS.md
+        backend = FilesystemBackend(root_dir=str(WORKSPACE_DIR), virtual_mode=True)
+
         agent = create_deep_agent(
             name="固井质量评测助手",
             model=llm,
             tools=self.tools,
-            system_prompt=self._get_system_prompt(),
-            backend=FilesystemBackend(root_dir=str(BASE_DIR)),
+            system_prompt=system_prompt,
+            skills=["./skills/"],
+            memory=[
+                "./memory/long-term.md",  # 长期记忆：跨会话持久知识
+                "./memory/short-term.md",  # 短期记忆：当前会话上下文
+            ],
+            interrupt_on={
+                "remove_file": {
+                    "allowed_decisions": ["approve", "reject"],
+                    "message": "⚠️ 文件删除操作需要确认：此操作不可逆，请审核待删除文件是否正确。",
+                },
+                "updateXGBoost": {
+                    "allowed_decisions": ["approve", "reject"],
+                    "message": "⚠️ XGBoost 模型重新训练需要确认：训练将覆盖现有模型，可能需要较长时间。",
+                },
+            },
+            backend=backend,
         )
-        logger.info("[_create_agent] DeepAgent 创建成功")
+        logger.info(f"[_create_agent] DeepAgent 创建成功，workspace: {WORKSPACE_DIR}")
         return agent
 
-    def _get_system_prompt(self) -> str:
-        """获取 Agent 系统提示词"""
-        return """你是一位固井质量评测专家助手。你的职责是：
+    @staticmethod
+    def _load_prompt(name: str) -> str:
+        """从 workspace/prompts/ 加载提示词文件
 
-1. **检索历史资料**：根据用户查询，从固井历史资料库中检索相关信息
-2. **质量评测**：对指定井的固井质量进行全面评测，包括：
-   - 水泥浆性能（密度、失水量、稠化时间）
-   - 施工参数（泵速、压力、替量）
-   - 固井效果（返高、候凝、胶结质量）
-   - 异常情况（漏失、窜槽、气侵）
-3. **测井数据分析**：使用分层评估系统分析 LAS 测井数据
-   - 规则引擎 → XGBoost → LLM 兜底
-   - 基于 AC/CAL/GR/RT 等曲线评估水泥胶结质量
-4. **生成报告**：输出结构化的评测报告，包含：
-   - 综合得分和等级
-   - 各维度详细评分
-   - 质量结论
-   - 改进建议
+        Args:
+            name: 文件名（如 "system-prompt.md"）
 
-工作流程：
-- 当用户询问某口井的质量情况时，先用 search_history 检索资料
-- 当用户询问某口井的胶结情况时,调用evaluate_well_log对./data/raw/威202H16-6_COM_20180525(360-2546).TXT的数据进行分层评估,返回胶结评估和xgboost计算时间
-- 当用户提供 LAS 文件或测井数据时，使用 evaluate_well_log 进行分层评估
-- 当用户需要对比数据时，使用 compare_data 工具
-- 回答要专业、准确、有依据，引用具体数据
+        Returns:
+            文件内容文本
 
-请用中文回答。
+        Raises:
+            FileNotFoundError: 文件不存在
+        """
+        path = WORKSPACE_DIR / "prompts" / name
+        if not path.exists():
+            raise FileNotFoundError(f"提示词文件不存在: {path}")
+        logger.info(f"[_load_prompt] 加载提示词: {path}")
+        return path.read_text(encoding="utf-8")
+
+    @staticmethod
+    def reset_short_term_memory():
+        """重置短期记忆（每个会话开始时调用）
+
+        清空当前会话的临时上下文，保留长期记忆不变。
+        """
+        import datetime
+
+        short_term_path = WORKSPACE_DIR / "memory" / "short-term.md"
+        if not short_term_path.exists():
+            return
+
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        content = f"""# Short-Term Memory
+
+<!-- 本文件是 Agent 的短期记忆，记录当前会话的上下文。
+     每次会话开始时应重置本文件。
+     Agent 可通过 edit_file 更新本文件，跟踪当前任务状态。 -->
+
+## Current Session
+
+- **Session Start**: {now}
+- **Status**: idle
+
+## Active Context
+
+<!-- 当前正在处理的井/文件/任务 -->
+
+- **Active Well**: 无
+- **Active File**: 无
+- **Active Task**: 无
+
+## Recent Queries
+
+<!-- 本次会话中用户最近的查询，最多记录 10 条 -->
+
+暂无查询记录。
+
+## Temporary Findings
+
+<!-- 本次会话中的临时发现和中间结果 -->
+
+暂无临时发现。
+
+## Conversation Summary
+
+<!-- Agent 在对话变长时更新此节，压缩关键信息 -->
+
+暂无对话摘要。
 """
+        short_term_path.write_text(content, encoding="utf-8")
+        logger.info(f"[reset_short_term_memory] 短期记忆已重置: {now}")
 
     def run(self, query: str) -> str:
         """运行 Agent 处理用户查询
@@ -140,6 +228,11 @@ class CementAgent:
             RuntimeError: DeepAgent 未初始化或执行失败
         """
         logger.info(f"[CementAgent.run] 收到查询: {query}")
+
+        # 会话首次调用：重置短期记忆
+        if not self._session_initialized:
+            self.reset_short_term_memory()
+            self._session_initialized = True
 
         # 确保索引已加载
         if not self.indexer.is_ready:

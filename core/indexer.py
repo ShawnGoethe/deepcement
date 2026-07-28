@@ -47,8 +47,9 @@ class IndexManager:
         if self._embed_model is not None:
             return
 
-        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
         from pathlib import Path
+
+        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
         model_path = str(Path(__file__).parent.parent / "models" / "bge-large-zh")
         self._embed_model = HuggingFaceEmbedding(model_path)
@@ -67,9 +68,7 @@ class IndexManager:
             collection_name=settings.milvus.collection_name,
             dim=settings.milvus.dim,
         )
-        logger.info(
-            f"Milvus 连接成功: collection={settings.milvus.collection_name}"
-        )
+        logger.info(f"Milvus 连接成功: collection={settings.milvus.collection_name}")
 
     def _to_llama_documents(self, cement_docs: List[CementDocument]) -> list:
         """将 CementDocument 转为 LlamaIndex Document"""
@@ -137,9 +136,7 @@ class IndexManager:
             self._index = VectorStoreIndex.from_vector_store(
                 self._vector_store,
             )
-            logger.info(
-                f"已连接 Zilliz 集合: {settings.milvus.collection_name}"
-            )
+            logger.info(f"已连接 Zilliz 集合: {settings.milvus.collection_name}")
             return True
         except Exception as e:
             logger.error(f"连接 Zilliz 失败: {e}")

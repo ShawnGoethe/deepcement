@@ -42,6 +42,23 @@ class RetrieverConfig(BaseSettings):
     model_config = {"env_prefix": "RETRIEVER_"}
 
 
+class RerankerConfig(BaseSettings):
+    """重排序模型配置（BGE Reranker）"""
+
+    enabled: bool = Field(default=True, description="是否启用重排序")
+    model_path: str = Field(
+        default="models/bge-reranker-v2-m3",
+        description="重排序模型路径（相对于项目根目录）",
+    )
+    top_n: int = Field(default=5, description="重排序后返回的结果数量")
+    candidate_multiplier: int = Field(
+        default=3,
+        description="候选倍数：初始检索 top_k = top_n * candidate_multiplier",
+    )
+
+    model_config = {"env_prefix": "RERANKER_"}
+
+
 class MilvusConfig(BaseSettings):
     """Milvus/Zilliz 向量数据库配置"""
 
@@ -70,6 +87,7 @@ class Settings:
         self.llm = LLMConfig()
         self.embed = EmbedConfig()
         self.retriever = RetrieverConfig()
+        self.reranker = RerankerConfig()
         self.paths = PathConfig()
         self.milvus = MilvusConfig()
 
