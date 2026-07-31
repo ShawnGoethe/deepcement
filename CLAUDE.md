@@ -14,14 +14,22 @@ DeepCement is a cementing quality evaluation system for oil wells, built on Deep
 # Install dependencies
 pip install -r requirements.txt
 
-# Build vector index from documents in data/raw/
-python main.py --build-index
+# Start the API server (development mode, auto-reload)
+fastapi dev main.py
+# Windows 终端遇到 emoji 编码错误时：
+set PYTHONUTF8=1 && fastapi dev main.py
 
-# Run single evaluation
-python main.py --well "XX-1" --query "生成固井质量评测报告"
+# Production mode
+fastapi run main.py
 
-# Interactive mode (recommended for development)
-python main.py --interactive
+# API endpoints (after server starts)
+#   GET  /health          — 健康检查 + 索引状态
+#   POST /index/build     — 构建向量索引
+#   POST /search          — 语义检索历史资料
+#   POST /chat            — Agent 对话
+
+# Swagger UI
+open http://localhost:8000/docs
 
 # Run tests
 python tests/test_basic.py
@@ -48,11 +56,12 @@ Documents (data/raw/) → Ingester → Indexer → Retriever → Evaluator → R
 - **`indexer.py`** — `IndexManager` wraps LlamaIndex `VectorStoreIndex`. Handles build/save/load with lazy initialization of LLM and embedding models. Uses `OpenAILike` wrappers for API-compatible models.
 - **`retriever.py`** — `HistoryRetriever` provides semantic search with metadata filtering (`search()`, `query()`, `search_by_well()`).
 - **`evaluator.py`** — `QualityEvaluator` runs 4-dimension evaluation (slurry, operation, effect, anomaly). Each dimension is independently scored by LLM. Overall score = dimension average.
+- **`tracing.py`** — LangSmith observability setup. `setup_tracing()` initializes env vars at startup; re-exports `@traceable` decorator for instrumenting functions.
 
 ### Agent Layer (`agent/`)
 
 - **`orchestrator.py`** — `CementAgent` orchestrates the full flow. Uses DeepAgent when available, falls back to rule-based matching when not installed.
-- **`tools.py`** — Agent tools: `search_history`, `evaluate_quality`, `compare_data`.
+- **`tools.py`** — Agent tools: `search_history`, `evaluate_quality`, `archive_file`.
 - **`report/`** — Markdown report generation with Jinja2 templates.
 
 ## Configuration
@@ -62,6 +71,7 @@ All config via environment variables (`.env` file, see `.env.example`):
 - `LLM_*` — LLM settings (DeepSeek/Qwen compatible OpenAI API)
 - `EMBED_*` — Embedding model settings
 - `DATA_*` — Path overrides for raw/index/report directories
+- `LANGSMITH_*` — LangSmith tracing (`TRACING`, `API_KEY`, `PROJECT`, `ENDPOINT`). Set `LANGSMITH_TRACING=true` + `LANGSMITH_API_KEY` to enable. LangChain calls are auto-traced; LlamaIndex functions use `@traceable` from `core.tracing`.
 
 Config classes use pydantic-settings with `env_prefix` for automatic env loading.
 

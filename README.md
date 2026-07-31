@@ -8,28 +8,25 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      应用层                                  │
-│   岩性解释  │  胶结评价  │  风险预警  │  方案推荐  │  报告生成  │
+│                    FastAPI 服务层 (api/)                      │
+│   /health  │  /index/build  │  /search  │  /chat  │  /docs  │
 └─────────────────────────────────────────────────────────────┘
                               ↑
 ┌─────────────────────────────────────────────────────────────┐
-│                     DeepAgent 编排层                         │
-│   Harness 调度  │  工具路由  │  多Agent协作  │  工作流引擎     │
+│                     Agent 编排层 (agent/)                     │
+│   CementAgent 编排  │  工具路由  │  报告生成  │  技能管理      │
 └─────────────────────────────────────────────────────────────┘
                               ↑
 ┌─────────────────────────────────────────────────────────────┐
-│                      工具封装                                │
-│  检索融合  │  评分/报告  │  数据分析  │  异常检测 |  多模态    │
-└─────────────────────────────────────────────────────────────┘                             
-                              ↑
-┌─────────────────────────────────────────────────────────────┐
-│                      LlamaIndex 数据层                       │
-│  文档解析  │  索引管理  │  检索融合  │  多模态处理             │
+│                      核心引擎层 (core/)                       │
+│  文档摄入  │  索引管理  │  语义检索  │  质量评测  │  分层评估   │
+│  规则引擎  │  XGBoost  │           │           │            │
 └─────────────────────────────────────────────────────────────┘
                               ↑
 ┌─────────────────────────────────────────────────────────────┐
-│                      模型推理层                              │
-│  规则引擎  │  XGBoost+windows/CNN+Transformer│ LLM │  KG推理 │
+│                      模型层 (models/)                         │
+│   BGE-Large-ZH (Embedding)  │  BGE-Reranker-v2-M3 (重排)    │
+│              XGBoost (固井质量预测)  │  LLM (评测/对话)        │
 └─────────────────────────────────────────────────────────────┘
                               ↑
 ┌─────────────────────────────────────────────────────────────┐
@@ -94,7 +91,8 @@ data/raw/
 
 支持格式：
 
-- **PDF**（重点支持）— 固井施工报告、完井报告
+- **PDF** — 固井施工报告、完井报告（PyMuPDF 解析）
+- **Word** — 固井文档（python-docx 解析）
 - **Excel** — 固井数据表、施工参数记录表
 - **CSV** — 结构化数据
 
@@ -116,27 +114,6 @@ python main.py --build-index
 14:30:25 |    INFO | 索引构建完成
 14:30:25 |    INFO | 索引已保存到: data/index
 ```
-
-XGBoost 17个特征
-
-```
-# 全量训练（原有功能）
-python scripts/train_xgboost.py --mode train
-
-# 增量学习（新功能）
-python scripts/train_xgboost.py --mode incremental
-
-# 从单个文件增量学习
-python scripts/train_xgboost.py --mode incremental --file data/raw/新井数据.TXT
-
-# 自定义参数
-python scripts/train_xgboost.py --mode incremental \
-    --model-path models/xgboost_cement.json \
-    --增量-trees 30 \
-    --learning-rate 0.03
-```
-
-
 
 ### 5. 运行评测
 
@@ -199,34 +176,53 @@ python main.py --well "XX-1" --query "分析该井固井质量问题"
 
 ```
 DeepCement/
-├── main.py                          # 入口文件
-├── config.py                        # 配置管理
+├── main.py                          # FastAPI 服务入口
+├── config.py                        # 配置管理（pydantic-settings）
 ├── requirements.txt                 # Python 依赖
+├── pyproject.toml                   # 项目元数据 + 工具配置
 ├── .env.example                     # 环境变量模板
-├── .gitignore
+├── format.bat / format.sh           # 代码格式化脚本（black + isort + ruff）
 │
-├── core/                            # 核心模块
-│   ├── ingester.py                  # 数据摄入（PDF/Excel/CSV 解析 + 元数据提取）
+├── api/                             # FastAPI 服务层
+│   ├── app.py                       # FastAPI 应用实例 + 路由挂载
+│   ├── routes.py                    # API 路由定义（/health, /index/build, /search, /chat）
+│   ├── schemas.py                   # 请求/响应 Pydantic 模型
+│   └── dependencies.py              # 依赖注入（Agent 初始化、索引状态检查）
+│
+├── core/                            # 核心业务模块
+│   ├── ingester.py                  # 数据摄入（PDF/Word/Excel/CSV 解析 + 元数据提取）
 │   ├── indexer.py                   # LlamaIndex 向量索引管理
-│   ├── retriever.py                 # 语义检索引擎
-│   └── evaluator.py                 # 质量评测引擎
+│   ├── retriever.py                 # 语义检索引擎（含 BGE Reranker）
+│   ├── evaluator.py                 # LLM 四维度质量评测
+│   ├── extractor.py                 # LLM 结构化数据抽取（三元组）
+│   └── graph_builder.py             # 知识图谱 + SQLite 存储
 │
 ├── agent/                           # 智能体层
-│   ├── orchestrator.py              # DeepAgent 编排（含降级模式）
-│   ├── tools.py                     # Agent 工具定义
-│   └── report/
-│       ├── generator.py             # Markdown 报告生成器
-│       └── templates/
-│           └── quality_report.md    # 报告模板
+│   ├── orchestrator.py              # CementAgent 编排（含降级模式）
+│   ├── tools.py                     # Agent 工具定义（search, evaluate, compare）
+│   ├── report/
+│   │   ├── generator.py             # Markdown 报告生成器
+│   │   └── templates/
+│   │       └── quality_report.md    # Jinja2 报告模板
+│   └── workspace/                   # Agent 工作空间
+│       ├── memory/                  # 长期/短期记忆
+│       ├── prompts/                 # 系统提示词
+│       └── skills/                  # 技能定义（5 个技能）
+│
+├── config/
+│
+├── models/                          # 预训练模型
+│   ├── bge-large-zh/                # BGE 中文 Embedding 模型
+│   └── bge-reranker-v2-m3/          # BGE 重排序模型
 │
 ├── data/
-│   ├── raw/                         # 原始固井资料（PDF/Excel/CSV）
-│   └── index/                       # 向量索引持久化存储
+│   └── raw/                         # 原始固井资料（PDF/Word/Excel/CSV）
 │
 ├── agent/report/output/             # 生成的报告输出
 │
 └── tests/
-    └── test_basic.py                # 基础测试
+    ├── test_basic.py                # 基础测试
+    └── test_pdf_query.py            # PDF 查询测试
 ```
 
 ---
@@ -235,15 +231,11 @@ DeepCement/
 
 ## 核心模块说明
 
-
-
 ### 数据摄入 (`core/ingester.py`)
 
-- 解析 PDF/Excel/CSV 文件，输出标准化 `CementDocument`
+- 解析 PDF/Word/Excel/CSV 文件，输出标准化 `CementDocument`
 - 自动提取元数据：井名、日期、井深、固井井段
 - 支持按段落拆分 PDF 以保留上下文完整性
-
-
 
 ### 索引管理 (`core/indexer.py`)
 
@@ -251,28 +243,22 @@ DeepCement/
 - 支持持久化存储和增量更新
 - 延迟加载 LLM 和 Embedding 模型
 
-
-
 ### 语义检索 (`core/retriever.py`)
 
 - 语义搜索 + 元数据过滤（井名、时间段）
 - 提供 `search()`、`query()`、`search_by_well()` 等接口
-- `query()` 由 LLM 基于检索结果生成回答
-
-
+- 集成 BGE Reranker 进行结果重排序，提升检索精度
 
 ### 质量评测 (`core/evaluator.py`)
 
-- 4 维度独立评测，每个维度由 LLM 评分
+- 4 维度独立评测（水泥浆性能、施工参数、固井效果、异常情况），每个维度由 LLM 评分
 - 综合评分 = 各维度均分
 - 自动生成结论和改进建议
-
-
 
 ### Agent 编排 (`agent/orchestrator.py`)
 
 - 基于 DeepAgent 编排工具链
-- 工具：`search_history`、`evaluate_quality`、`compare_data`
+- 工具：`search_history`、`evaluate_quality`、`archive_file`
 - 未安装 DeepAgent 时自动降级为规则匹配模式
 
 ---
@@ -287,7 +273,7 @@ DeepCement/
 ├─────────────────────────────────────────────────────────┤
 │  1. 安装依赖        pip install -r requirements.txt     │
 │  2. 配置模型        cp .env.example .env → 填入 API Key  │
-│  3. 导入资料        将 PDF/Excel 放入 data/raw/          │
+│  3. 导入资料        将 PDF/Word/Excel 放入 data/raw/     │
 │  4. 构建索引        python main.py --build-index         │
 │  5. 开始评测        python main.py --interactive         │
 └─────────────────────────────────────────────────────────┘
@@ -315,16 +301,31 @@ python tests/test_basic.py
 
 
 
+## API 接口
+
+服务启动后访问 `http://localhost:8000/docs` 查看 Swagger 文档。
+
+| 方法   | 路径              | 说明                |
+| ---- | --------------- | ----------------- |
+| GET  | `/health`       | 健康检查 + 索引状态       |
+| POST | `/index/build`  | 构建向量索引（从 data/raw/） |
+| POST | `/search`       | 语义检索历史资料          |
+| POST | `/chat`         | Agent 对话           |
+
+---
+
 ## 技术栈
 
-
-| 组件        | 选型               | 用途               |
-| --------- | ---------------- | ---------------- |
-| Agent 框架  | DeepAgent        | 智能体编排，串联检索→分析→报告 |
-| RAG 框架    | LlamaIndex       | 文档索引、语义检索        |
-| LLM       | DeepSeek / Qwen  | 质量评测、报告生成        |
-| Embedding | 国产 Embedding 模型  | 文档向量化            |
-| 文档解析      | PyMuPDF / pandas | PDF / Excel 解析   |
-| 报告格式      | Markdown         | 结构化评测报告输出        |
+| 组件        | 选型                          | 用途               |
+| --------- | --------------------------- | ---------------- |
+| Web 框架    | FastAPI                      | REST API 服务      |
+| Agent 框架  | DeepAgent                    | 智能体编排，串联检索→分析→报告 |
+| RAG 框架    | LlamaIndex                   | 文档索引、语义检索        |
+| LLM       | DeepSeek / Qwen              | 质量评测、报告生成        |
+| Embedding | BGE-Large-ZH                  | 中文文档向量化          |
+| 重排序       | BGE-Reranker-v2-M3            | 检索结果重排序          |
+| 机器学习      | XGBoost                      | 固井质量预测          |
+| 文档解析      | PyMuPDF / python-docx / pandas | PDF / Word / Excel 解析 |
+| 报告格式      | Markdown + Jinja2             | 结构化评测报告输出        |
 
 

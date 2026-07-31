@@ -8,9 +8,9 @@ from pathlib import Path
 from loguru import logger
 
 from agent.tools import create_cement_tools
-from config import BASE_DIR, settings
-from core import DocumentIngester, HistoryRetriever, IndexManager, QualityEvaluator
-from core.cascade_evaluator import CascadeEvaluator
+from config import settings
+from core import HistoryRetriever, IndexManager, QualityEvaluator
+from core.tracing import traceable
 
 # Workspace 路径（AGENTS.md + skills）
 WORKSPACE_DIR = Path(__file__).parent / "workspace"
@@ -29,22 +29,14 @@ class CementAgent:
 
     def __init__(self):
         # 初始化核心组件
-        self.ingester = DocumentIngester(settings.raw_dir)
         self.indexer = IndexManager()
         self.retriever = HistoryRetriever(self.indexer)
         self.evaluator = QualityEvaluator(self.retriever)
-
-        # 初始化分层评估器
-        self.cascade_evaluator = CascadeEvaluator(
-            llm_evaluator=self.evaluator,
-            retriever=self.retriever,
-        )
 
         # 创建工具集（@tool 装饰的函数列表）
         self.tools = create_cement_tools(
             self.retriever,
             self.evaluator,
-            self.cascade_evaluator,
         )
 
         # 会话状态
@@ -52,18 +44,6 @@ class CementAgent:
 
         # 初始化 DeepAgent
         self._agent = self._create_agent()
-
-    def build_index(self):
-        """构建索引（从 raw 目录读取并索引）"""
-        logger.info("开始构建索引...")
-        documents = self.ingester.ingest_all()
-        if not documents:
-            logger.warning("没有找到可索引的文档")
-            return False
-
-        self.indexer.build_index(documents)
-        logger.info("索引构建完成（已写入 Zilliz Cloud）")
-        return True
 
     def load_index(self) -> bool:
         """连接 Zilliz Cloud 加载已有索引"""
@@ -82,8 +62,6 @@ class CementAgent:
             └── skills/                # 技能目录
                 ├── build-index/
                 ├── evaluate-well/
-                ├── analyze-las/
-                ├── train-model/
                 └── code-quality/
 
         Raises:
@@ -93,8 +71,6 @@ class CementAgent:
         from deepagents import create_deep_agent
         from deepagents.backends import FilesystemBackend
         from langchain_openai import ChatOpenAI
-
-        logger.info("[_create_agent] 导入模块成功")
 
         # 创建 LangChain 模型实例
         llm = ChatOpenAI(
@@ -129,13 +105,9 @@ class CementAgent:
                 "./memory/short-term.md",  # 短期记忆：当前会话上下文
             ],
             interrupt_on={
-                "remove_file": {
+                "archive_file": {
                     "allowed_decisions": ["approve", "reject"],
-                    "message": "⚠️ 文件删除操作需要确认：此操作不可逆，请审核待删除文件是否正确。",
-                },
-                "updateXGBoost": {
-                    "allowed_decisions": ["approve", "reject"],
-                    "message": "⚠️ XGBoost 模型重新训练需要确认：训练将覆盖现有模型，可能需要较长时间。",
+                    "message": "⚠️ 文件归档确认：将文件移至 data/raw/loaded/，请审核待归档文件是否正确。",
                 },
             },
             backend=backend,
@@ -215,6 +187,7 @@ class CementAgent:
         short_term_path.write_text(content, encoding="utf-8")
         logger.info(f"[reset_short_term_memory] 短期记忆已重置: {now}")
 
+    @traceable(name="CementAgent.run")
     def run(self, query: str) -> str:
         """运行 Agent 处理用户查询
 

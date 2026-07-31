@@ -11,6 +11,7 @@ from loguru import logger
 
 from config import settings
 from core.retriever import HistoryRetriever, RetrievalResult
+from core.tracing import traceable
 
 
 class QualityGrade(str, Enum):
@@ -129,6 +130,7 @@ class QualityEvaluator:
             max_tokens=settings.llm.max_tokens,
         )
 
+    @traceable(name="QualityEvaluator.evaluate")
     def evaluate(
         self,
         well_name: str,
@@ -210,6 +212,7 @@ class QualityEvaluator:
             return response.message.content
         return str(response)
 
+    @traceable(name="QualityEvaluator.evaluate_dimension")
     def _evaluate_dimension(
         self,
         dim_key: str,
@@ -280,6 +283,7 @@ class QualityEvaluator:
 
         return dim
 
+    @traceable(name="QualityEvaluator.generate_conclusion")
     def _generate_conclusion(
         self,
         well_name: str,
@@ -318,6 +322,7 @@ class QualityEvaluator:
             logger.error(f"生成结论失败: {e}")
             return "结论生成失败，请查看各维度详细评测结果。"
 
+    @traceable(name="QualityEvaluator.generate_suggestions")
     def _generate_suggestions(
         self,
         well_name: str,

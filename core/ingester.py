@@ -76,7 +76,8 @@ class DocumentIngester:
     def _parse_pdf(self, file_path: Path) -> List[CementDocument]:
         """解析 PDF 文件（固井施工报告）
 
-        使用 PyMuPDF 提取文本，按页拆分并提取元数据
+        使用 PyMuPDF 提取文本；当页面文本过短（疑似扫描件）时，
+        自动调用 PaddleOCR VL 进行图像识别兜底。
         """
         try:
             import fitz  # PyMuPDF
@@ -84,17 +85,38 @@ class DocumentIngester:
             logger.error("请安装 PyMuPDF: pip install pymupdf")
             return []
 
+        # 延迟导入 OCR 引擎配置
+        from config import settings as _settings
+        ocr_enabled = _settings.ocr.enabled
+        min_text_len = _settings.ocr.min_text_length
+
         documents = []
+        ocr_used_pages = 0
+
         try:
             doc = fitz.open(str(file_path))
             full_text = ""
-            for page in doc:
-                full_text += page.get_text()
+
+            for page_idx, page in enumerate(doc):
+                page_text = page.get_text()
+
+                # 文本过短 → 尝试 OCR 兜底（扫描件）
+                if len(page_text.strip()) < min_text_len and ocr_enabled:
+                    ocr_text = self._ocr_page(page)
+                    if ocr_text:
+                        page_text = ocr_text
+                        ocr_used_pages += 1
+                        logger.debug(f"第 {page_idx + 1} 页使用 OCR 识别，文本长度: {len(ocr_text)}")
+
+                full_text += page_text
 
             # 提取元数据（从文本中匹配常见固井字段）
             metadata = self._extract_metadata(full_text, file_path)
             metadata["file_path"] = str(file_path)
             metadata["total_pages"] = len(doc)
+            if ocr_used_pages > 0:
+                metadata["ocr_used"] = True
+                metadata["ocr_pages"] = ocr_used_pages
 
             # 按段落拆分（空行分隔）
             paragraphs = [p.strip() for p in full_text.split("\n\n") if p.strip()]
@@ -109,10 +131,34 @@ class DocumentIngester:
                 ))
 
             doc.close()
+            if ocr_used_pages > 0:
+                logger.info(f"PDF OCR 完成: {file_path.name}，{ocr_used_pages}/{len(doc)} 页使用 OCR")
         except Exception as e:
             logger.error(f"PDF 解析失败 {file_path}: {e}")
 
         return documents
+
+    def _ocr_page(self, page) -> str:
+        """对单个 PDF 页面执行 OCR 识别
+
+        将页面渲染为图片后交给 PaddleOCR VL 识别
+        """
+        try:
+            from PIL import Image
+            import io
+            from pipeline.ocr_engine import ocr_page
+        except ImportError as e:
+            logger.warning(f"OCR 依赖缺失: {e}")
+            return ""
+
+        try:
+            # 渲染页面为图片（200 DPI，平衡清晰度和速度）
+            pix = page.get_pixmap(dpi=200)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            return ocr_page(img)
+        except Exception as e:
+            logger.warning(f"页面 OCR 失败: {e}")
+            return ""
 
     def _parse_word(self, file_path: Path) -> List[CementDocument]:
         """解析 Word 文件（.docx / .doc）

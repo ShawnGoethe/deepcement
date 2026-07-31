@@ -59,6 +59,50 @@ class RerankerConfig(BaseSettings):
     model_config = {"env_prefix": "RERANKER_"}
 
 
+class OCRConfig(BaseSettings):
+    """PaddleOCR VL 配置（扫描件 PDF 识别）"""
+
+    enabled: bool = Field(default=True, description="是否启用 OCR 识别（扫描件 PDF 兜底）")
+    model_path: str = Field(
+        default="models/paddleOCR",
+        description="PaddleOCR VL 模型路径（相对于项目根目录）",
+    )
+    device: str = Field(default="auto", description="推理设备：auto / cuda / cpu")
+    prompt: str = Field(
+        default="请识别图片中的所有文字内容，保持原始排版格式。",
+        description="OCR 提示词",
+    )
+    min_text_length: int = Field(
+        default=50,
+        description="页面文本长度低于此值时触发 OCR（视为扫描件）",
+    )
+
+    model_config = {"env_prefix": "OCR_"}
+
+
+class GraphConfig(BaseSettings):
+    """知识图谱 + 结构化数据配置"""
+
+    enabled: bool = Field(default=True, description="是否启用结构化数据抽取")
+    graph_dir: str = Field(default="data/graph", description="PropertyGraphIndex 存储目录")
+    sqlite_path: str = Field(default="data/cement.db", description="SQLite 数据库路径")
+
+    model_config = {"env_prefix": "GRAPH_"}
+
+
+class LangSmithConfig(BaseSettings):
+    """LangSmith 可观测性配置"""
+
+    tracing: bool = Field(default=False, description="是否启用 LangSmith tracing")
+    api_key: str = Field(default="", description="LangSmith API Key (lsv2_pt_...)")
+    project: str = Field(default="deepcement", description="LangSmith 项目名称")
+    endpoint: str = Field(
+        default="https://api.smith.langchain.com", description="LangSmith API 地址"
+    )
+
+    model_config = {"env_prefix": "LANGSMITH_"}
+
+
 class MilvusConfig(BaseSettings):
     """Milvus/Zilliz 向量数据库配置"""
 
@@ -88,8 +132,11 @@ class Settings:
         self.embed = EmbedConfig()
         self.retriever = RetrieverConfig()
         self.reranker = RerankerConfig()
+        self.ocr = OCRConfig()
+        self.graph = GraphConfig()
         self.paths = PathConfig()
         self.milvus = MilvusConfig()
+        self.langsmith = LangSmithConfig()
 
     @property
     def raw_dir(self) -> Path:

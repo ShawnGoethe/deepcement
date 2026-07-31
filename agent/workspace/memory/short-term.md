@@ -6,16 +6,16 @@
 
 ## Current Session
 
-- **Session Start**: 2026-07-27 18:31
+- **Session Start**: 2026-07-31 14:09
 - **Status**: idle
 
 ## Active Context
 
 <!-- 当前正在处理的井/文件/任务 -->
 
-- **Active Well**: 威202H16-6
-- **Active File**: 威202H16-6_COM_20180525(360-2546).TXT
-- **Active Task**: 固井质量评测已完成
+- **Active Well**: 无
+- **Active File**: 无
+- **Active Task**: 无
 
 ## Recent Queries
 

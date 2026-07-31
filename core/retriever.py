@@ -4,22 +4,24 @@
 集成 BGE Reranker 进行重排序以提高检索精度
 """
 
-from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
 from config import settings
 from core.indexer import IndexManager
+from core.tracing import traceable
 
 
 @dataclass
 class RetrievalResult:
     """检索结果"""
-    content: str                          # 文本内容
-    score: float = 0.0                    # 相似度分数
+
+    content: str  # 文本内容
+    score: float = 0.0  # 相似度分数
     metadata: dict = field(default_factory=dict)  # 元数据
-    source: str = ""                      # 来源
+    source: str = ""  # 来源
 
 
 class HistoryRetriever:
@@ -41,8 +43,11 @@ class HistoryRetriever:
         if not self.index_manager.is_ready:
             raise RuntimeError("索引未就绪，请先构建或加载索引")
 
-    def _init_reranker(self):
-        """初始化 BGE Reranker（延迟加载）"""
+    def init_reranker(self):
+        """初始化 BGE Reranker
+
+        可在启动时主动调用，也可延迟到首次检索时自动调用。
+        """
         if self._reranker is not None:
             return
 
@@ -67,6 +72,10 @@ class HistoryRetriever:
             )
         except Exception as e:
             logger.warning(f"Reranker 初始化失败: {e}，将使用原始排序")
+
+    def _init_reranker(self):
+        """内部调用，委托给 init_reranker"""
+        self.init_reranker()
 
     def _get_retriever(self, top_k: int = 5):
         """获取 LlamaIndex retriever（每次根据 top_k 创建新实例）"""
@@ -116,6 +125,7 @@ class HistoryRetriever:
             logger.warning(f"重排序失败: {e}，使用原始排序")
             return nodes[:top_n]
 
+    @traceable(name="HistoryRetriever.search")
     def search(
         self,
         query: str,
@@ -180,16 +190,20 @@ class HistoryRetriever:
                 if str(meta["date"]) > date_to:
                     continue
 
-            results.append(RetrievalResult(
-                content=node.get_content(),
-                score=getattr(node, "score", 0.0),
-                metadata=meta,
-                source=meta.get("filename", "unknown"),
-            ))
+            results.append(
+                RetrievalResult(
+                    content=node.get_content(),
+                    score=getattr(node, "score", 0.0),
+                    metadata=meta,
+                    source=meta.get("filename", "unknown"),
+                )
+            )
 
         logger.info(f"检索完成: query='{query[:30]}...' → {len(results)} 条结果")
         return results
 
+    # query search为不同的检索方式
+    @traceable(name="HistoryRetriever.query")
     def query(self, question: str, top_k: int = settings.retriever.top_k) -> str:
         """自然语言查询（由 LLM 生成回答，带 Reranker 后处理）
 
@@ -210,7 +224,9 @@ class HistoryRetriever:
             logger.error(f"查询失败: {e}")
             return f"查询失败: {e}"
 
-    def search_by_well(self, well_name: str, top_k: int = settings.retriever.top_k) -> List[RetrievalResult]:
+    def search_by_well(
+        self, well_name: str, top_k: int = settings.retriever.top_k
+    ) -> List[RetrievalResult]:
         """按井名检索所有相关资料"""
         return self.search(
             query=f"{well_name} 固井 施工 质量",
